@@ -1,0 +1,387 @@
+# Supply_management_system
+This repository is about supply chain management models
+
+import pymysql
+import pandas as pd
+import math
+import time
+
+# 清空库存表中库存为0的数据
+def update_stock_info():
+    cursor = conn.cursor()
+    sql_lang = 'delete from stock_info where Stock = 0'
+    res = cursor.execute(sql_lang)
+    conn.commit()
+    cursor.close()
+
+# 更新商品表的数据，商品表中有五列值，分别为商品id，商品名称，商品规格，商品重量和商品类别
+def update_product_info():
+    P_id = input('请输入新增商品的id：')
+    #商品id必须为8位的数字
+    while len(P_id) != 8 or (P_id.isdigit() != True):
+        P_id = input('输入id格式不正确，id名称必须为8位数字，请重新输入新增商品的id：')
+    p_data = get_product_info()
+    p_id_list =  list(p_data['product_id'])
+    if P_id in p_id_list:
+        print('此商品已存在！')
+        return None
+    P_name = input('请输入新增商品的名称：')
+    #商品规格必须为box,carton,bottle,case
+    P_spec = input('请输入新增商品的规格（box,carton,bottle,case）：')
+    while (P_spec in ['box','carton','bottle','case']) == False:
+        P_spec = input('新增商品规格必须为：box,carton,bottle,case；请重新输入新增商品规格：')
+    P_weight = input('请输入新增商品的重量：')
+    #商品重量为数字
+    while P_weight.isdigit() != True:
+        P_weight = input('新增商品重量必须为数字（kg）表示，请重新输入新增商品重量：')
+    P_class = input('请输入新增商品的类别(food_fp,material,package)：')
+    # 商品类别为食品成品，原料或者包材
+    while (P_class in ['food_fp','material','package']) == False:
+        P_class = input('新增商品类别必须为：food_fp,material,package；请重新输入新增商品类别：')
+    sql_lang = "insert into product_info(Product_id,Product_name,Product_spec,Product_weight_kg,Product_class)" \
+               "values ('%s','%s','%s','%d','%s')"%(P_id,P_name,P_spec,float(P_weight),P_class)
+    # 把更新的货架数据上传到数据库里
+    cursor = conn.cursor()
+    res = cursor.execute(sql_lang)
+    conn.commit()
+    print("商品名为：{}，id为：{}的商品入库成功！".format(P_name,P_id))
+
+#更新货架表数据，货架表有三列数据，货架id，货架位置，货架称重量
+def update_shelf_info():
+    S_id = input('请输入新增货架的id：')
+    # 货架表id必须为8为的数字
+    while len(S_id) != 8 or (S_id.isdigit() != True):
+        S_id = input('输入id格式不正确，id名称必须为8位数字，请重新输入新增货架的id：')
+    s_id_list = list(get_shelf_info()['Shelf_id'])
+    if S_id in s_id_list:
+        print('此货架已存在！')
+        return None
+    S_location = input('请输入新增货架的位置：')
+    # 货架表位置必须为数字表示
+    while S_location.isdigit() != True:
+        S_location = input('货架位置必须为数字表示，请重新输入新增货架位置：')
+    S_load_kg = input('请输入新增货架的承重量（kg）：')
+    # 货架称重量必须为数字表示
+    while S_load_kg.isdigit() != True:
+        S_load_kg = input('货架称重量（kg）必须为数字，请重新输入新增货架称重量：')
+    sql_lang = "insert into shelf(Shelf_id,Shelf_location,Shelf_load_kg)" \
+               "values ('%s','%d','%d')" % (S_id,int(S_location),int(S_load_kg))
+    # 把更新的货架数据上传到数据库里
+    cursor = conn.cursor()
+    res = cursor.execute(sql_lang)
+    conn.commit()
+    print("已成功在仓库加入货架{}！".format(S_id))
+
+#从数据库获取商品信息
+def get_product_info():
+    cursor = conn.cursor()
+    sql_lang = 'select * from product_info'
+    res = cursor.execute(sql_lang)
+    data = list(cursor.fetchall())
+    p_info = pd.DataFrame(data,columns=['product_id','product_name',
+                                        'product_spec','product_weight_kg',
+                                        'product_class'])
+    p_info.index=p_info['product_id']
+    cursor.close
+    return p_info
+
+#从数据库获取库存信息
+def get_stock_info():
+    cursor = conn.cursor()
+    sql_lang = 'select * from stock_info'
+    res = cursor.execute(sql_lang)
+    data = list(cursor.fetchall())
+    sk_info = pd.DataFrame(data, columns=['product_id', 'shelf_id',
+                                         'stock_volume', 'stock_state'])
+    cursor.close
+    return sk_info
+
+#从数据库获取货架信息
+def get_shelf_info():
+    cursor = conn.cursor()
+    sql_lang = 'select * from shelf'
+    res = cursor.execute(sql_lang)
+    data = list(cursor.fetchall())
+    sk_info = pd.DataFrame(data, columns=['Shelf_id', 'Shelf_location', 'Shelf_load_kg'])
+    cursor.close
+    return sk_info
+
+#把不同类别的商品按顺序分配到货架上
+def calculate_allocate(load_info_data,rest_stock_volume,shelf_code):
+    #遍历库存表，在对应库存类别的货架上入库相应的商品
+    for i in load_info_data['Shelf_id']:
+
+        if int(int(i) / 10000000) == shelf_code:
+            #如果一个货架的剩余称重量就可以放下入库商品，则把商品全部放在这个货架上
+            if load_info_data.loc[i, 'rest_volume'] >= rest_stock_volume:
+                load_info_data.loc[i, 'rest_volume'] = load_info_data.loc[i, 'rest_volume'] - rest_stock_volume
+                load_info_data.loc[i, 'stock_volume'] = load_info_data.loc[i, 'stock_volume'] + rest_stock_volume
+                rest_stock_volume = 0
+
+            # 如果一个货架的剩余称重量就不可以放下入库商品，则把货架的剩余空间都放上商品，剩余未放置商品则放在下一个货架上
+            else:
+                load_info_data.loc[i, 'stock_volume'] = load_info_data.loc[i, 'stock_volume'] + load_info_data.loc[
+                    i, 'rest_volume']
+                #计算还有多少kg的商品没有入库
+                rest_stock_volume = rest_stock_volume - load_info_data.loc[i, 'rest_volume']
+                load_info_data.loc[i, 'rest_volume'] = 0
+
+        else:
+            continue
+
+    return load_info_data,rest_stock_volume
+
+def save_loaddata_to_sql(product_id,original_load,load_info_data,state,standard_weight):
+    stock_change = load_info_data
+
+    #计算库存的变化量是多少
+    stock_change['stock_volume'] = load_info_data['stock_volume']-original_load['stock_volume']
+    stock_change['stock_volume'] = stock_change['stock_volume'].astype(float)
+
+    #统计库存量有变化的库存货架信息
+    stock_change_2 = stock_change.loc[stock_change['stock_volume']!= 0,:]
+
+    # 把变化重量转换为变换数量
+    stock_change_2['stock_volume'] = stock_change_2['stock_volume']/standard_weight
+
+    # 把数据上传到数据库
+    cursor = conn.cursor()
+    for i in stock_change_2['Shelf_id']:
+        #验证对应的货架上有无入库的商品
+        verify_p_isin_shelf ="select * from stock_info where Product_id = '%s' and Shelf_id = '%s'and Stock_state = '%s'"%(product_id,i,state)
+        res = cursor.execute(verify_p_isin_shelf)
+        verify_info = list(cursor.fetchall())
+        # 有对应的商品则进行库存数量的更改
+        if len(verify_info) != 0:
+            sql_lang = "update stock_info set stock = stock + '%d' where Product_id = '%s' and Shelf_id = '%s' and Stock_state = '%s' "%(stock_change_2.loc[i,:][1],product_id,i,state)
+
+        # 无对应的商品则插入新的货架商品库存数据
+        else:
+            sql_lang = "insert into stock_info(Product_id,Shelf_id,Stock,Stock_state) values('%s','%s',%d,'%s') "%(product_id,i,round(stock_change_2.loc[i,:][1],0),state)
+        res2 = cursor.execute(sql_lang)
+        conn.commit()
+
+    cursor.close()
+
+def allocate_shelf(product_id,product_volume,state):
+    cursor = conn.cursor()
+    #获取货架信息
+    sql_shelf ='select * from shelf order by Shelf_id ASC'
+    res_shelf = cursor.execute(sql_shelf)
+    data_shelf = list(cursor.fetchall())
+    shelf_data = pd.DataFrame(data_shelf,columns=['Shelf_id','Shelf_location',
+                                            'Shelf_load_kg'])
+    #计算每个货架上放了多少重量的商品
+    sql_load_info = 'select Shelf_id,sum(stock*(select Product_weight_kg from product_info where product_info.Product_id = stock_info.Product_id)) as Product_stock_volume from stock_info group by Shelf_id order by Shelf_id ASC'
+    res_load_info = cursor.execute(sql_load_info)
+    data_load_info = list(cursor.fetchall())
+    load_info_data = pd.DataFrame(data_load_info,columns = ['Shelf_id','stock_volume'])
+    #计算每个货架的剩余称重量是多少
+    load_info_data['rest_volume'] = shelf_data['Shelf_load_kg'] - load_info_data['stock_volume']
+    load_info_data.index = load_info_data['Shelf_id']
+
+    #计算要入库的商品的重量
+    standard_weight = get_product_info().loc[product_id,:][3]
+    product_load = standard_weight*product_volume
+
+    # 查看要入库的商品的类别
+    p_class = get_product_info().loc[product_id,:][4]
+
+    rest_stock_volume = product_load
+    original_load = load_info_data.copy(deep=True)
+
+    #类别为食物成品，状态不过期的商品放在编号1开头的货架上
+    if p_class == 'food_fp' and (state == 'A' or state == 'SLM'):
+        load_info_data,rest_stock_volume = calculate_allocate(load_info_data,rest_stock_volume,1)
+    #状态为过期的商品放在编号4开头的货架上
+    elif state == 'E':
+        load_info_data,rest_stock_volume = calculate_allocate(load_info_data, rest_stock_volume, 4)
+    # 状态为不过期的原料放在编号2开头的货架上
+    elif p_class == 'material' and (state == 'A' or state == 'SLM'):
+        load_info_data,rest_stock_volume = calculate_allocate(load_info_data, rest_stock_volume, 2)
+    # 状态为不过期的包材放在编号3开头的货架上
+    elif p_class == 'package' and (state == 'A' or state == 'SLM'):
+        load_info_data,rest_stock_volume = calculate_allocate(load_info_data, rest_stock_volume, 3)
+
+    #把计算的数据上传到数据库中
+    save_loaddata_to_sql(product_id,original_load,load_info_data,state,standard_weight)
+
+    if rest_stock_volume != 0:
+        print('产品{}入库完成，由于仓库没有余位，有{}件商品没有入库成功'.format(product_id,math.ceil(rest_stock_volume/standard_weight)))
+    else:
+        print('产品{}入库成功!'.format(product_id))
+
+#货物入库计算
+def calculate_product_to_shelf():
+    product_id = input('请输入要入库的商品id:')
+    #确认入库的商品是在商品表里的商品
+    while product_id not in get_product_info().loc[:,'product_id']:
+        product_id = input('输入错误，没有id为{}的商品，请输入要出库的商品id:'.format(product_id))
+    product_volume = input('请输入要入库的商品数量:')
+    # 确认入库的商品数量是数字
+    while product_volume.isdigit() != True:
+        product_volume = input('入库量必须为数字表示，请重新输入入库量：')
+    state = input('请输入要入库的商品状态(A,E,SLM):')
+    # 确认入库的商品状态为A-available，E-expired，SLM-slow mving中的一种
+    while (state  in ['A','E','SLM']) == False:
+        state = input('入库商品状态必须为：A,E,SLM；请重新输入入库商品状态：')
+
+    product_vol = int(product_volume)
+    #计算商品需要分配到哪个货架上
+    allocate_shelf(product_id, product_vol, state)
+
+def save_outbounddata_to_sql(product_id, outbound_data, state):
+    cursor = conn.cursor()
+    #如果出库量为0，则不更新数据库
+    if outbound_data.empty:
+        return None
+    # 如果出库量不为0，则根据计算的每个货架的出库量，更新数据库中对应货架的商品的出库后的数据
+    for i in outbound_data['Shelf_id']:
+        p_volume = outbound_data.loc[outbound_data['Shelf_id']==i,:]
+        p_volume = p_volume.loc[p_volume['Product_id']==product_id,:]
+        p_volume = p_volume.loc[p_volume['Stock_state']==state,'Stock'].item()
+        #print(p_volume,i,product_id,state)
+        sql_lang = "update stock_info set Stock = '%d' where Shelf_id = '%s' and Product_id = '%s' and Stock_state = '%s'"%(p_volume,i,product_id,state)
+        res =  cursor.execute(sql_lang )
+        sql_lang2 = 'select * from stock_info'
+        res2 = cursor.execute(sql_lang2)
+        data = list(cursor.fetchall())
+        #print(pd.DataFrame(data))
+        conn.commit()
+    print('数据上传到数据库成功！')
+    cursor.close()
+
+def outbound_product(product_id, product_volume, state):
+    #获取库存数据
+    cursor = conn.cursor()
+    sql_stock_info = 'select * from stock_info'
+    res = cursor.execute(sql_stock_info)
+    data_load= list(cursor.fetchall())
+    data_load_info = pd.DataFrame(data_load,columns=['Product_id','Shelf_id','Stock','Stock_state'])
+
+    # 获取要出库的商品的库存数据
+    outbound_data = data_load_info.loc[data_load_info['Product_id']==product_id,:]
+    outbound_data = outbound_data.loc[outbound_data['Stock_state']==state,:]
+
+    #如果仓库没有该商品的库存，提示用户仓库没有该商品，出库失败
+    if outbound_data.empty:
+        print('出库失败，仓库中没有商品id为{}，库存状态为{}的商品！'.format(product_id,state))
+
+    # 如果仓库该商品的库存小于出库量，在出库所有该商品后，提示用户缺货多少件
+    elif outbound_data['Stock'].sum() < product_volume:
+        outbound_volume = outbound_data['Stock'].sum()
+        outbound_data['Stock'] = outbound_data['Stock'] - outbound_data['Stock']
+        shortage = product_volume - outbound_volume
+        print('出库成功，出库商品id为{}，库存状态为{}的商品{}件，缺货{}件。'.format(product_id,state,outbound_volume,shortage))
+
+    # 如果仓库该商品的库存大于等于出库量，进行货架出库商品操作
+    else:
+        pro_volume = product_volume
+        for i in outbound_data['Shelf_id']:
+            s_volume=outbound_data.loc[outbound_data['Shelf_id']==i,'Stock'].item()
+            if s_volume >= pro_volume and pro_volume != 0:
+                outbound_data.loc[outbound_data['Shelf_id'] == i, 'Stock'] = s_volume-pro_volume
+                pro_volume = 0
+            elif s_volume < pro_volume and pro_volume != 0:
+                pro_volume = pro_volume - outbound_data.loc[outbound_data['Shelf_id'] == i, 'Stock'].item()
+                outbound_data.loc[outbound_data['Shelf_id'] == i, 'Stock'] = 0
+            else:
+                print('出库成功，出库商品id为{}，库存状态为{}的商品{}件'.format(product_id,state,product_volume))
+
+    #出库数据上传到数据库中
+    save_outbounddata_to_sql(product_id, outbound_data, state)
+
+#货物出库计算
+def calculate_product_outbound():
+    product_id = input('请输入要出库的商品id:')
+    #判断仓库有无该id的商品
+    while product_id not in get_product_info().loc[:, 'product_id']:
+        product_id = input('输入错误，没有id为{}的商品，请输入要出库的商品id:'.format(product_id))
+    product_volume = input('请输入要出库的商品数量:')
+    # 出库商品数量的输入必须为数字
+    while product_volume.isdigit() != True:
+        product_volume = input('出库量必须为数字表示，请重新输入出库量：')
+    state = input('请输入要出库的商品状态:')
+    # 出库商品状态必须为A-available，E-expired，SLM-slow moving中的一种
+    while (state  in ['A','E','SLM']) == False:
+        state = input('入库商品状态必须为：A,E,SLM；请重新输入入库商品状态：')
+    product_vol = int(product_volume)
+    #根据货架仓储信息进行货物出库计算
+    outbound_product(product_id, product_vol, state)
+    #更新库存表，把出库后库存为0的记录删除
+    update_stock_info()
+
+def get_user_action():
+    print('------库存管理系统-------')
+    print('请选择需要进行的库存操作')
+    print(' 1：查询商品信息')
+    print(' 2：查询货架信息')
+    print(' 3：查询仓储信息')
+    print(' 4：新增货架信息')
+    print(' 5：新增商品信息')
+    print(' 6：商品入库管理')
+    print(' 7：商品出库管理')
+    print(' 8:退出')
+    print('-----------------------')
+
+def operation_user_choice(choice):
+    if choice == '1':
+        print(get_product_info())
+    if choice == '2':
+        print(get_shelf_info())
+    if choice == '3':
+        print(get_stock_info())
+    if choice == '4':
+        update_shelf_info()
+    if choice == '5':
+        update_product_info()
+    if choice == '6':
+        calculate_product_to_shelf()
+    if choice == '7':
+        calculate_product_outbound()
+    if choice == '8':
+        confirm_quit = input('输入Y确认退出，输入其它任意按钮或回车返回操作选择界面')
+        if confirm_quit == 'Y':
+            print('成功退出系统！')
+            return None
+        else:
+            print('返回操作界面')
+            get_user_action()
+            choice = input('请选择需要进行的库存操作')
+            operation_user_choice(choice)
+    time.sleep(5)
+    print('此操作已完成！请选择接下来的操作：')
+    time.sleep(3)
+    get_user_action()
+    choice = input('请选择需要进行的库存操作：')
+    operation_user_choice(choice)
+
+def input_user_password():
+    user = input("请输入用户名")
+    if len(user) == 0:
+        user = input("用户名不能为空，请输入用户名")
+    password = input("请输入密码")
+    if len(password) == 0:
+        user = input("密码不能为空，请输入密码")
+    return user,password
+
+def main():
+    user, password = input_user_password()
+    global conn
+
+    #用户名或者密码输入错误的异常处理
+    try:
+        conn = pymysql.connect(host='127.0.0.1', port=3306, database='stock_calculation',
+                               user='{}'.format(user), password='{}'.format(password), charset='utf8')
+    except:
+        print('用户名或密码输入错误，请重新尝试')
+        main()
+    else:
+        get_user_action()
+        choice = input('请选择需要进行的库存操作')
+        while (int(choice) in range(1, 9)) == False:
+            choice = input('输入错误，请选择需要进行的库存操作')
+        operation_user_choice(choice)
+
+if __name__ == '__main__':
+    main()
