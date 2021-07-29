@@ -1,5 +1,5 @@
 # Supply_management_system
-This repository is about supply chain management models
+This system is about supply chain management models
 
 import pymysql
 import pandas as pd
